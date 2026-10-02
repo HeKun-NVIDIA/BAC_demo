@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>语音播报</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    font-family: system-ui, "PingFang SC", "Noto Sans CJK SC", sans-serif; color: #fff; }
+  .card { width: min(640px, 92vw); padding: 32px; border-radius: 22px; background: rgba(255,255,255,0.1);
+    backdrop-filter: blur(14px); box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+  h1 { margin: 0 0 6px; font-size: 30px; }
+  .sub { opacity: 0.75; margin-bottom: 22px; }
+  label { display: block; font-size: 14px; opacity: 0.85; margin: 16px 0 8px; }
+  textarea { width: 100%; height: 130px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.25); background: rgba(0,0,0,0.25);
+    color: #fff; padding: 14px; font-size: 17px; line-height: 1.6; resize: vertical; font-family: inherit; }
+  .row { display: flex; gap: 16px; align-items: center; }
+  select { flex: 1; padding: 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.25); background: rgba(0,0,0,0.3); color: #fff; font-size: 16px; }
+  input[type=range] { flex: 1; }
+  #speedVal { width: 54px; text-align: right; font-weight: 700; }
+  .buttons { display: flex; gap: 12px; margin-top: 22px; }
+  button { flex: 1; padding: 15px; border: none; border-radius: 14px; font-size: 18px; font-weight: 700; cursor: pointer; font-family: inherit; }
+  #btn { color: #fff; }
+  #btnDl { background: rgba(255,255,255,0.16); color: #fff; }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  #status { margin-top: 14px; min-height: 22px; font-size: 15px; opacity: 0.9; }
+  audio { width: 100%; margin-top: 10px; }
+  #history { margin-top: 16px; font-size: 14px; opacity: 0.8; }
+  #history div { padding: 6px 0; border-top: 1px solid rgba(255,255,255,0.12); cursor: pointer; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1 id="title"></h1>
+  <div class="sub" id="subtitle"></div>
+  <label for="txt">播报内容</label>
+  <textarea id="txt"></textarea>
+  <label for="voice">音色</label>
+  <div class="row"><select id="voice"></select></div>
+  <label for="speed">语速</label>
+  <div class="row"><input id="speed" type="range" min="0.5" max="2" step="0.1"><span id="speedVal"></span></div>
+  <div class="buttons">
+    <button id="btn">🔊 生成并播放</button>
+    <button id="btnDl" disabled>⬇ 下载 WAV</button>
+  </div>
+  <div id="status"></div>
+  <div id="audioWrap" class="hidden"><audio id="audio" controls></audio></div>
+  <div id="history"></div>
+</div>
+<script>
+/* ==================== 作品设计 开始 ==================== */
+const DESIGN = {
+  title: "Spark 语音播报站",
+  subtitle: "Qwen3-TTS 在 DGX Spark 本地合成，不依赖任何云服务",
+  defaultText: "欢迎来到 NVIDIA DGX Spark 体验区！今天，我们用一台桌面上的 AI 超级计算机，在本地完成写代码、看图和语音合成。",
+  defaultVoice: "vivian",
+  defaultSpeed: 1.0,
+  voices: [
+    { id: "vivian", name: "Vivian · 温柔女声" },
+    { id: "serena", name: "Serena · 知性女声" },
+    { id: "uncle_fu", name: "福叔 · 沉稳男声" },
+    { id: "dylan", name: "Dylan · 青年男声" },
+    { id: "eric", name: "Eric · 播音男声" },
+    { id: "ryan", name: "Ryan · 活力男声" },
+    { id: "aiden", name: "Aiden · 清爽男声" },
+  ],
+  colors: { from: "#1e3c72", to: "#6a3093", button: "#76b900" },
+  // 保留最近几条合成记录
+  historySize: 5,
+};
+/* ==================== 作品设计 结束 ==================== */
+
+const $ = (id) => document.getElementById(id);
+document.title = DESIGN.title;
+document.body.style.background = `linear-gradient(135deg, ${DESIGN.colors.from}, ${DESIGN.colors.to})`;
+$("btn").style.background = DESIGN.colors.button;
+$("title").textContent = DESIGN.title;
+$("subtitle").textContent = DESIGN.subtitle;
+$("txt").value = DESIGN.defaultText;
+$("voice").innerHTML = DESIGN.voices.map((v) => `<option value="${v.id}">${v.name}</option>`).join("");
+$("voice").value = DESIGN.defaultVoice;
+$("speed").value = DESIGN.defaultSpeed;
+const showSpeed = () => ($("speedVal").textContent = Number($("speed").value).toFixed(1) + "x");
+$("speed").addEventListener("input", showSpeed);
+showSpeed();
+
+let currentUrl = null;
+const history = [];
+
+function renderHistory() {
+  $("history").innerHTML = history.map((h, i) => `<div data-i="${i}">▶ ${h.voice} · ${h.speed}x · ${h.text.slice(0, 28)}${h.text.length > 28 ? "…" : ""}</div>`).join("");
+  $("history").querySelectorAll("div").forEach((el) => {
+    el.onclick = () => play(history[Number(el.dataset.i)].url);
+  });
+}
+
+function play(url) {
+  $("audio").src = url;
+  $("audioWrap").classList.remove("hidden");
+  $("audio").play().catch(() => {});
+}
+
+$("btn").onclick = async () => {
+  const text = $("txt").value.trim();
+  if (!text) { $("status").textContent = "请先输入要播报的文字"; return; }
+  const voice = $("voice").value;
+  const speed = Number($("speed").value);
+  $("btn").disabled = true;
+  $("status").textContent = "⏳ 正在本地合成语音…";
+  const started = performance.now();
+  try {
+    const response = await fetch("/api/tts/v1/audio/speech", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: text, voice, speed }),
+    });
+    if (!response.ok) throw new Error(`语音服务返回 ${response.status}`);
+    const blob = await response.blob();
+    currentUrl = URL.createObjectURL(blob);
+    play(currentUrl);
+    history.unshift({ url: currentUrl, voice, speed: speed.toFixed(1), text });
+    while (history.length > DESIGN.historySize) URL.revokeObjectURL(history.pop().url);
+    renderHistory();
+    $("btnDl").disabled = false;
+    $("status").textContent = `✅ 合成完成，用时 ${((performance.now() - started) / 1000).toFixed(1)} 秒`;
+  } catch (error) {
+    $("status").textContent = "❌ " + error.message;
+  } finally {
+    $("btn").disabled = false;
+  }
+};
+
+$("btnDl").onclick = () => {
+  if (!currentUrl) return;
+  const a = document.createElement("a");
+  a.href = currentUrl;
+  a.download = `spark-tts-${Date.now()}.wav`;
+  a.click();
+};
+</script>
+</body>
+</html>

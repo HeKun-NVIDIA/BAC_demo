@@ -1,0 +1,43 @@
+{
+  "bundleVersion": "2.0.0",
+  "purpose": "DGX Spark x OpenClaw workshop (offline, prompt-driven demos)",
+  "target": {
+    "hardware": "NVIDIA DGX Spark / GB10",
+    "architecture": "linux-arm64"
+  },
+  "runtime": {
+    "openclaw": "2026.9.4",
+    "node": "24.16.0",
+    "vllm": "0.28.0",
+    "flashinfer-python": "0.6.16.post3",
+    "chromium": "151.0.7922.34 (playwright build 1234)",
+    "qwen-tts": "0.1.1",
+    "opencv-python-headless": "4.14.0.94",
+    "three": "0.180.0"
+  },
+  "models": {
+    "qwen": {
+      "id": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+      "revision": "1355db6a052410cfd62085d94b58866fd0f2c3c5",
+      "source": "hf-mirror.com (not on ModelScope)"
+    },
+    "qwen3-tts": {
+      "id": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+      "source": "modelscope.cn"
+    },
+    "nemotron (optional)": {
+      "id": "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-NVFP4",
+      "revision": "16993199e436da4ba75ddc410855f87e0d996ee6"
+    }
+  },
+  "ports": {
+    "qwen": 18000,
+    "nemotron": 18001,
+    "tts": 18002,
+    "openclaw": 13001,
+    "openclawBrowserControl": 13003,
+    "openclawBrowserCdp": "13011-13012",
+    "workshopWeb": 18088,
+    "participantApps": "18090-18099"
+  }
+}

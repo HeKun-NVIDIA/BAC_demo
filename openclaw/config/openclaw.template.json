@@ -1,0 +1,160 @@
+{
+  "$schema": "https://docs.openclaw.ai/schemas/openclaw.json",
+  "models": {
+    "providers": {
+      "qwen-local": {
+        "baseUrl": "http://127.0.0.1:18000/v1",
+        "api": "openai-completions",
+        "auth": "api-key",
+        "apiKey": "local-offline",
+        "models": [
+          {
+            "id": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+            "name": "Qwen 3.6 35B NVFP4 (DGX Spark)",
+            "reasoning": true,
+            "input": ["text", "image"],
+            "compat": {
+              "thinkingFormat": "qwen-chat-template"
+            },
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 131072,
+            "maxTokens": 16384
+          }
+        ]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "__WORKSPACE__",
+      "skipBootstrap": true,
+      "skills": [],
+      "timeoutSeconds": 600,
+      "maxConcurrent": 1,
+      "model": {
+        "primary": "qwen-local/nvidia/Qwen3.6-35B-A3B-NVFP4"
+      },
+      "models": {
+        "qwen-local/nvidia/Qwen3.6-35B-A3B-NVFP4": {
+          "alias": "qwen",
+          "params": {
+            "chat_template_kwargs": {
+              "enable_thinking": false,
+              "preserve_thinking": true
+            }
+          }
+        }
+      },
+      "thinkingDefault": "off",
+      "reasoningDefault": "off",
+      "subagents": {
+        "maxConcurrent": 1,
+        "maxChildrenPerAgent": 1,
+        "runTimeoutSeconds": 600
+      }
+    }
+  },
+  "tools": {
+    "profile": "coding",
+    "alsoAllow": ["browser", "tts"],
+    "loopDetection": {
+      "enabled": true
+    },
+    "deny": [
+      "web_search",
+      "x_search",
+      "web_fetch",
+      "code_execution",
+      "image_generate",
+      "music_generate",
+      "video_generate",
+      "sessions_spawn",
+      "subagents",
+      "agents_wait",
+      "sessions_yield",
+      "cron"
+    ],
+    "fs": {
+      "workspaceOnly": true
+    },
+    "exec": {
+      "host": "gateway",
+      "security": "full",
+      "ask": "off",
+      "backgroundMs": 120000,
+      "applyPatch": {
+        "workspaceOnly": true
+      }
+    },
+    "elevated": {
+      "enabled": false
+    }
+  },
+  "browser": {
+    "enabled": true,
+    "executablePath": "__CHROMIUM_BIN__",
+    "headless": true,
+    "noSandbox": true,
+    "defaultProfile": "openclaw",
+    "ssrfPolicy": {
+      "allowedHostnames": ["127.0.0.1", "localhost"],
+      "allowRfc2544BenchmarkRange": true
+    }
+  },
+  "tts": {
+    "auto": "off",
+    "provider": "openai",
+    "providers": {
+      "openai": {
+        "apiKey": "local-offline",
+        "baseUrl": "http://127.0.0.1:18002/v1",
+        "model": "qwen3-tts",
+        "speakerVoice": "vivian",
+        "responseFormat": "wav"
+      }
+    }
+  },
+  "commands": {
+    "text": true,
+    "native": "auto",
+    "nativeSkills": "auto"
+  },
+  "skills": {
+    "install": {
+      "allowUploadedArchives": false
+    }
+  },
+  "plugins": {
+    "load": {
+      "paths": ["__WORKSHOP_PLUGIN__"]
+    },
+    "entries": {
+      "workshop-agent": {
+        "enabled": true,
+        "hooks": {
+          "allowConversationAccess": true
+        }
+      }
+    }
+  },
+  "gateway": {
+    "mode": "local",
+    "port": 13001,
+    "bind": "lan",
+    "auth": {
+      "mode": "token",
+      "token": "__GATEWAY_TOKEN__"
+    },
+    "controlUi": {
+      "allowedOrigins": [
+        "http://localhost:13001",
+        "http://127.0.0.1:13001"
+      ]
+    }
+  }
+}

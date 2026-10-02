@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>平台跳跃</title>
+<style>html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }</style>
+<script src="/vendor/phaser/dist/phaser.min.js"></script>
+</head>
+<body>
+<script>
+/* ==================== 作品设计 开始 ==================== */
+const DESIGN = {
+  title: "星光跳跃",
+  // 屏幕底部的操作提示
+  helpText: "← → / A D 移动　空格 跳跃（可二段跳）　R 重新开始",
+  colors: {
+    skyTop: "#5ec8ff", skyBottom: "#dff6ff", hills: "#8fd694", clouds: "#ffffff",
+    grass: "#4caf50", dirt: "#8d5a2b", platform: "#c8833a",
+    hero: "#ff5a36", heroCap: "#2b59ff", enemy: "#8e44ad", coin: "#ffd23f", flag: "#ff3b6b",
+  },
+  // 重力
+  gravity: 1400,
+  // 跑动速度
+  runSpeed: 240,
+  // 起跳速度
+  jumpSpeed: 560,
+  // 二段跳
+  doubleJump: true,
+  lives: 3,
+  // 敌人巡逻速度
+  enemySpeed: 70,
+  coinScore: 10,
+  stompScore: 50,
+  // 额外金币数量：自动放在平台和地面上方（想要更多金币就调大，例如 20）
+  bonusCoins: 0,
+  // 跳跃、金币、踩敌粒子
+  particles: true,
+  sound: true,
+  // 关卡地图已调好难度，一般不需要修改；想要更多金币请调大 bonusCoins。
+  // # 地面  = 悬空平台  C 金币  E 敌人  P 出生点  F 终点旗  . 空
+  level: [
+    "..........................................................................................",
+    "..........................................................................................",
+    "..........................................................................................",
+    ".........................................CCC................CCC...........................",
+    ".....................CC.................=====................E............................",
+    "....................====.........CCCC......................=====.........CCCC.............",
+    "...............CCC.................E...................CCC..............======............",
+    "..............=====.............======................=====...............................",
+    "........................CCC...................CCC..............CCC........................",
+    "...P......C.C.C.C.............E.....................E.................E.......C.C.C...F...",
+    "########################...###################...##############...########################",
+    "########################...###################...##############...########################",
+  ],
+};
+/* ==================== 作品设计 结束 ==================== */
+
+const TILE = 48;
+const VIEW_W = 960, VIEW_H = 540;
+const C = DESIGN.colors;
+document.title = DESIGN.title;
+const color = (hex) => Phaser.Display.Color.HexStringToColor(hex).color;
+
+let audio = null;
+const SFX = {
+  jump: [["square", 520, 880, 0.12, 0.1]],
+  coin: [["square", 988, 988, 0.06, 0.1], ["square", 1319, 1319, 0.14, 0.1, 0.06]],
+  stomp: [["triangle", 260, 90, 0.16, 0.22]],
+  hurt: [["sawtooth", 320, 80, 0.35, 0.13]],
+  win: [["sine", 523, 523, 0.12, 0.18], ["sine", 659, 659, 0.12, 0.18, 0.12], ["sine", 784, 784, 0.12, 0.18, 0.24], ["sine", 1047, 1047, 0.35, 0.18, 0.36]],
+  lose: [["sawtooth", 300, 70, 0.6, 0.13]],
+};
+function sfx(name) {
+  if (!DESIGN.sound) return;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return;
+  audio = audio || new Ctx();
+  if (audio.state === "suspended") audio.resume();
+  for (const [type, from, to, dur, vol, delay = 0] of SFX[name]) {
+    const t = audio.currentTime + delay;
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(from, t);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(to, 1), t + dur);
+    gain.gain.setValueAtTime(vol, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(t);
+    osc.stop(t + dur + 0.02);
+  }
+}
+
+function makeTextures(scene) {
+  const g = scene.make.graphics({}, false);
+  const make = (key, w, h, draw) => {
+    if (scene.textures.exists(key)) scene.textures.remove(key);
+    g.clear();
+    draw();
+    g.generateTexture(key, w, h);
+  };
+  make("ground", 48, 48, () => {
+    g.fillStyle(color(C.dirt)).fillRect(0, 0, 48, 48);
+    g.fillStyle(0x000000, 0.12).fillRect(6, 20, 8, 6).fillRect(28, 32, 10, 6);
+    g.fillStyle(color(C.grass)).fillRect(0, 0, 48, 12);
+  });
+  make("platform", 48, 20, () => {
+    g.fillStyle(color(C.platform)).fillRoundedRect(0, 0, 48, 20, 6);
+    g.lineStyle(2, 0x000000, 0.25).strokeRoundedRect(1, 1, 46, 18, 6);
+  });
+  make("hero", 34, 44, () => {
+    g.fillStyle(color(C.hero)).fillRoundedRect(3, 10, 28, 30, 8);
+    g.fillStyle(color(C.heroCap)).fillRoundedRect(0, 0, 34, 14, 7);
+    g.fillStyle(0xffffff).fillCircle(12, 22, 5).fillCircle(23, 22, 5);
+    g.fillStyle(0x1b1b1b).fillCircle(13, 22, 2.5).fillCircle(24, 22, 2.5);
+    g.fillStyle(0x333333).fillRect(6, 40, 9, 4).fillRect(19, 40, 9, 4);
+  });
+  make("enemy", 36, 30, () => {
+    g.fillStyle(color(C.enemy)).fillEllipse(18, 17, 36, 26);
+    g.fillStyle(0xffffff).fillCircle(11, 13, 5).fillCircle(25, 13, 5);
+    g.fillStyle(0x000000).fillCircle(11, 14, 2.5).fillCircle(25, 14, 2.5);
+    g.fillStyle(0x222222).fillRect(6, 27, 8, 3).fillRect(22, 27, 8, 3);
+  });
+  make("coin", 22, 22, () => {
+    g.fillStyle(color(C.coin)).fillCircle(11, 11, 10);
+    g.lineStyle(2, 0x000000, 0.25).strokeCircle(11, 11, 9);
+    g.fillStyle(0xffffff, 0.6).fillCircle(8, 7, 3);
+  });
+  make("flag", 44, 160, () => {
+    g.fillStyle(0xe0e0e0).fillRect(4, 0, 6, 160);
+    g.fillStyle(0xffd23f).fillCircle(7, 4, 5);
+    g.fillStyle(color(C.flag)).fillTriangle(10, 10, 44, 26, 10, 42);
+  });
+  make("dot", 8, 8, () => g.fillStyle(0xffffff).fillCircle(4, 4, 4));
+  g.destroy();
+}
+
+function drawBackground(scene, worldWidth) {
+  const sky = scene.add.graphics().setScrollFactor(0).setDepth(-30);
+  const top = Phaser.Display.Color.ValueToColor(color(C.skyTop));
+  const bottom = Phaser.Display.Color.ValueToColor(color(C.skyBottom));
+  const bands = 24;
+  for (let i = 0; i < bands; i++) {
+    const c = Phaser.Display.Color.Interpolate.ColorWithColor(top, bottom, bands - 1, i);
+    sky.fillStyle(Phaser.Display.Color.GetColor(c.r, c.g, c.b)).fillRect(0, (VIEW_H / bands) * i, VIEW_W, VIEW_H / bands + 1);
+  }
+  const clouds = scene.add.graphics().setScrollFactor(0.15).setDepth(-20);
+  clouds.fillStyle(color(C.clouds), 0.9);
+  for (let x = 80; x < worldWidth * 0.15 + VIEW_W + 300; x += 320) {
+    const y = 50 + ((x * 37) % 110);
+    clouds.fillEllipse(x, y, 120, 44).fillEllipse(x + 42, y - 14, 90, 50).fillEllipse(x - 40, y - 4, 80, 38);
+  }
+  const hills = scene.add.graphics().setScrollFactor(0.35).setDepth(-10);
+  hills.fillStyle(color(C.hills), 1);
+  for (let x = -100; x < worldWidth * 0.35 + VIEW_W + 400; x += 280) hills.fillEllipse(x, VIEW_H - 40, 440, 300);
+}
+
+function burst(scene, x, y, tint, count = 14) {
+  if (!DESIGN.particles) return;
+  const emitter = scene.add.particles(x, y, "dot", {
+    speed: { min: 80, max: 240 }, angle: { min: 0, max: 360 }, lifespan: 550,
+    scale: { start: 0.9, end: 0 }, tint, gravityY: 300, emitting: false,
+  });
+  emitter.setDepth(50);
+  emitter.explode(count);
+  scene.time.delayedCall(800, () => emitter.destroy());
+}
+
+class Level extends Phaser.Scene {
+  constructor() { super("level"); }
+
+  create() {
+    makeTextures(this);
+    const map = DESIGN.level;
+    const cols = Math.max(...map.map((row) => row.length));
+    this.worldW = cols * TILE;
+    this.worldH = map.length * TILE;
+    this.solid = map.map((row) => [...row].map((ch) => ch === "#" || ch === "="));
+    drawBackground(this, this.worldW);
+
+    this.platforms = this.physics.add.staticGroup();
+    this.coins = this.physics.add.staticGroup();
+    this.enemies = this.physics.add.group();
+    let spawn = { x: TILE * 2, y: this.worldH - TILE * 3 };
+    map.forEach((row, r) => [...row].forEach((ch, c) => {
+      const x = c * TILE + TILE / 2, y = r * TILE + TILE / 2;
+      if (ch === "#") this.platforms.create(x, y, "ground");
+      else if (ch === "=") this.platforms.create(x, r * TILE + 10, "platform");
+      else if (ch === "C") {
+        const coin = this.coins.create(x, y, "coin");
+        this.tweens.add({ targets: coin, scaleX: 0.25, duration: 450, yoyo: true, repeat: -1, ease: "Sine.inOut" });
+      } else if (ch === "E") this.enemies.create(x, y, "enemy").setData("dir", -1);
+      else if (ch === "P") spawn = { x, y };
+      else if (ch === "F") this.flag = this.physics.add.staticImage(x, (r + 1) * TILE - 80, "flag");
+    }));
+    this.spawn = spawn;
+    this.addBonusCoins(map);
+
+    this.physics.world.setBounds(0, 0, this.worldW, this.worldH + 400);
+    this.physics.world.setBoundsCollision(true, true, true, false);
+    this.cameras.main.setBounds(0, 0, this.worldW, Math.max(this.worldH, VIEW_H));
+
+    this.hero = this.physics.add.sprite(spawn.x, spawn.y, "hero").setDepth(10);
+    this.hero.setCollideWorldBounds(true);
+    this.hero.body.setSize(26, 40).setOffset(4, 4);
+    this.cameras.main.startFollow(this.hero, true, 0.12, 0.12);
+    this.physics.add.collider(this.hero, this.platforms);
+    this.physics.add.collider(this.enemies, this.platforms);
+    this.physics.add.overlap(this.hero, this.coins, (_, coin) => this.collect(coin));
+    this.physics.add.overlap(this.hero, this.enemies, (_, enemy) => this.touchEnemy(enemy));
+    if (this.flag) this.physics.add.overlap(this.hero, this.flag, () => this.win());
+
+    this.keys = this.input.keyboard.addKeys({
+      left: "LEFT", right: "RIGHT", a: "A", d: "D", up: "UP", w: "W", space: "SPACE", r: "R",
+    });
+    this.lives = DESIGN.lives;
+    this.score = 0;
+    this.coinCount = 0;
+    this.totalCoins = this.coins.countActive();
+    this.jumps = 0;
+    this.invulnerable = 0;
+    this.finished = false;
+
+    const style = { fontFamily: "system-ui, 'PingFang SC', 'Noto Sans CJK SC', sans-serif", fontSize: "22px", color: "#ffffff", stroke: "#000000", strokeThickness: 4 };
+    this.hud = this.add.text(16, 12, "", style).setScrollFactor(0).setDepth(100);
+    this.add.text(VIEW_W - 16, 12, DESIGN.title, style).setOrigin(1, 0).setScrollFactor(0).setDepth(100);
+    this.add.text(VIEW_W / 2, VIEW_H - 18, DESIGN.helpText,
+      { ...style, fontSize: "16px", strokeThickness: 3 }).setOrigin(0.5).setScrollFactor(0).setDepth(100);
+    this.updateHud();
+  }
+
+  addBonusCoins(map) {
+    const spots = [];
+    map.forEach((row, r) => [...row].forEach((ch, c) => {
+      const below = map[r + 1] && map[r + 1][c];
+      const free = ch === "." && (below === "#" || below === "=");
+      const awayFromEnds = c > 6 && Math.abs(c * TILE - (this.flag ? this.flag.x : Infinity)) > TILE * 3;
+      if (free && awayFromEnds) spots.push([r, c]);
+    }));
+    let seed = 7;
+    const random = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
+    for (let i = spots.length - 1; i > 0; i--) {
+      const j = Math.floor(random() * (i + 1));
+      [spots[i], spots[j]] = [spots[j], spots[i]];
+    }
+    for (const [r, c] of spots.slice(0, Math.max(0, DESIGN.bonusCoins))) {
+      const coin = this.coins.create(c * TILE + TILE / 2, r * TILE + TILE / 2, "coin");
+      this.tweens.add({ targets: coin, scaleX: 0.25, duration: 450, yoyo: true, repeat: -1, ease: "Sine.inOut" });
+    }
+  }
+
+  updateHud() {
+    this.hud.setText(`分数 ${this.score}　❤ ${this.lives}　🪙 ${this.coinCount}/${this.totalCoins}`);
+  }
+
+  collect(coin) {
+    coin.destroy();
+    this.coinCount += 1;
+    this.score += DESIGN.coinScore;
+    sfx("coin");
+    burst(this, coin.x, coin.y, color(C.coin));
+    this.updateHud();
+  }
+
+  touchEnemy(enemy) {
+    if (this.finished) return;
+    const body = this.hero.body;
+    if (body.velocity.y > 0 && body.bottom <= enemy.body.top + 14) {
+      burst(this, enemy.x, enemy.y, color(C.enemy), 20);
+      enemy.destroy();
+      this.hero.setVelocityY(-DESIGN.jumpSpeed * 0.6);
+      this.score += DESIGN.stompScore;
+      sfx("stomp");
+      this.updateHud();
+    } else {
+      this.hurt();
+    }
+  }
+
+  hurt(force = false) {
+    if (this.finished || (!force && this.invulnerable > 0)) return;
+    this.lives -= 1;
+    this.invulnerable = 1.5;
+    this.cameras.main.shake(200, 0.01);
+    this.updateHud();
+    if (this.lives <= 0) {
+      sfx("lose");
+      this.endGame("游戏结束", `得分 ${this.score}　按 R 重新开始`);
+      return;
+    }
+    sfx("hurt");
+    this.hero.body.reset(this.spawn.x, this.spawn.y);
+    this.jumps = 0;
+  }
+
+  win() {
+    if (this.finished) return;
+    sfx("win");
+    burst(this, this.flag.x, this.flag.y - 60, color(C.flag), 40);
+    this.endGame("胜利！", `得分 ${this.score}　金币 ${this.coinCount}/${this.totalCoins}　按 R 再玩一次`);
+  }
+
+  endGame(title, subtitle) {
+    this.finished = true;
+    this.hero.setVelocity(0, 0);
+    this.hero.body.setAllowGravity(false);
+    const style = { fontFamily: "system-ui, 'PingFang SC', 'Noto Sans CJK SC', sans-serif", color: "#ffffff", stroke: "#000000" };
+    this.add.rectangle(VIEW_W / 2, VIEW_H / 2, VIEW_W, VIEW_H, 0x000000, 0.45).setScrollFactor(0).setDepth(200);
+    this.add.text(VIEW_W / 2, VIEW_H / 2 - 24, title, { ...style, fontSize: "56px", strokeThickness: 8 }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
+    this.add.text(VIEW_W / 2, VIEW_H / 2 + 36, subtitle, { ...style, fontSize: "24px", strokeThickness: 5 }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
+  }
+
+  isSolidAt(px, py) {
+    const row = this.solid[Math.floor(py / TILE)];
+    return Boolean(row && row[Math.floor(px / TILE)]);
+  }
+
+  update(_, delta) {
+    const dt = Math.min(delta / 1000, 1 / 30);
+    if (Phaser.Input.Keyboard.JustDown(this.keys.r)) { this.scene.restart(); return; }
+
+    this.enemies.children.iterate((enemy) => {
+      if (!enemy || !enemy.active) return;
+      const body = enemy.body;
+      let dir = enemy.getData("dir");
+      if (body.blocked.left) dir = 1;
+      else if (body.blocked.right) dir = -1;
+      else if (body.blocked.down && !this.isSolidAt(dir < 0 ? body.left - 2 : body.right + 2, body.bottom + 4)) dir = -dir;
+      enemy.setData("dir", dir).setVelocityX(dir * DESIGN.enemySpeed).setFlipX(dir > 0);
+    });
+
+    if (this.finished) return;
+    if (this.invulnerable > 0) this.invulnerable -= dt;
+    this.hero.setAlpha(this.invulnerable > 0 && Math.floor(this.invulnerable * 10) % 2 ? 0.4 : 1);
+
+    const k = this.keys;
+    const left = k.left.isDown || k.a.isDown;
+    const right = k.right.isDown || k.d.isDown;
+    const target = left ? -DESIGN.runSpeed : right ? DESIGN.runSpeed : 0;
+    const vx = this.hero.body.velocity.x;
+    const accel = 1800 * dt;
+    this.hero.setVelocityX(Phaser.Math.Clamp(target, vx - accel, vx + accel));
+    if (left) this.hero.setFlipX(true);
+    else if (right) this.hero.setFlipX(false);
+
+    const grounded = this.hero.body.blocked.down || this.hero.body.touching.down;
+    if (grounded) this.jumps = 0;
+    const jumpPressed = Phaser.Input.Keyboard.JustDown(k.space) || Phaser.Input.Keyboard.JustDown(k.up) || Phaser.Input.Keyboard.JustDown(k.w);
+    const maxJumps = DESIGN.doubleJump ? 2 : 1;
+    if (jumpPressed && (grounded || this.jumps < maxJumps)) {
+      this.jumps = grounded ? 1 : this.jumps + 1;
+      this.hero.setVelocityY(-DESIGN.jumpSpeed);
+      sfx("jump");
+      burst(this, this.hero.x, this.hero.y + 20, 0xffffff, 8);
+    }
+    if (this.hero.y > this.worldH + 60) this.hurt(true);
+  }
+}
+
+new Phaser.Game({
+  type: Phaser.AUTO,
+  width: VIEW_W,
+  height: VIEW_H,
+  backgroundColor: DESIGN.colors.skyTop,
+  parent: document.body,
+  physics: { default: "arcade", arcade: { gravity: { y: DESIGN.gravity }, debug: false } },
+  scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+  scene: Level,
+});
+</script>
+</body>
+</html>

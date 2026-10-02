@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D 卡丁车</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; font-family: system-ui, "PingFang SC", "Noto Sans CJK SC", sans-serif; }
+  #hud { position: fixed; top: 16px; left: 16px; color: #fff; font-size: 22px; font-weight: 700; text-shadow: 0 2px 4px #000; line-height: 1.5; }
+  #title { position: fixed; top: 16px; right: 20px; color: #fff; font-size: 24px; font-weight: 800; text-shadow: 0 2px 4px #000; text-align: right; }
+  #subtitle { display: block; margin-top: 4px; font-size: 14px; font-weight: 500; opacity: 0.85; }
+  #boost { width: 180px; height: 12px; border: 2px solid #fff; border-radius: 8px; overflow: hidden; margin-top: 6px; }
+  #boostFill { height: 100%; width: 100%; background: linear-gradient(90deg, #ffd23f, #ff5a1f); }
+  #center { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column;
+    color: #fff; font-size: 84px; font-weight: 900; text-shadow: 0 4px 12px #000; pointer-events: none; text-align: center; }
+  #center small { font-size: 26px; font-weight: 600; margin-top: 12px; }
+  #help { position: fixed; bottom: 14px; width: 100%; text-align: center; color: #fff; font-size: 16px; text-shadow: 0 2px 3px #000; opacity: 0.85; }
+</style>
+<script type="importmap">{"imports":{"three":"/vendor/three/build/three.module.js"}}</script>
+</head>
+<body>
+<div id="hud"></div>
+<div id="title"><span id="titleText"></span><span id="subtitle"></span></div>
+<div id="center"></div>
+<div id="help"></div>
+<script type="module">
+import * as THREE from "three";
+
+/* ==================== 作品设计 开始 ==================== */
+const DESIGN = {
+  title: "Spark 赛车场",
+  subtitle: "冲过终点，拿下第一",
+  // 屏幕底部的操作提示
+  helpText: "W / ↑ 油门　S / ↓ 刹车　A D / ← → 转向　空格 氮气加速　R 重新开始",
+  colors: {
+    sky: "#8fd3ff", grass: "#5fb85a", road: "#3b3d47", line: "#ffffff",
+    curbA: "#ff3b3b", curbB: "#ffffff", trees: "#2f8f3a", trunk: "#7a4a25",
+    player: "#ff5a1f",
+    opponents: ["#2f80ff", "#22c55e", "#a855f7", "#facc15", "#ec4899"],
+  },
+  // 圈数
+  laps: 3,
+  // 电脑对手数量（最多 5）
+  opponents: 3,
+  // 最高速度（米/秒）
+  maxSpeed: 32,
+  // 加速度
+  acceleration: 14,
+  // 转向灵敏度
+  turnSpeed: 2.2,
+  // 氮气时的最高速度
+  boostSpeed: 46,
+  // 氮气持续秒数
+  boostDuration: 1.2,
+  // 氮气冷却秒数
+  boostCooldown: 4,
+  // 电脑平均速度
+  opponentSpeed: 27,
+  roadWidth: 16,
+  trees: 70,
+};
+/* ==================== 作品设计 结束 ==================== */
+
+const C = DESIGN.colors;
+document.title = DESIGN.title;
+document.getElementById("help").textContent = DESIGN.helpText;
+document.getElementById("titleText").textContent = DESIGN.title;
+document.getElementById("subtitle").textContent = DESIGN.subtitle;
+const hud = document.getElementById("hud");
+const center = document.getElementById("center");
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(C.sky);
+scene.fog = new THREE.Fog(C.sky, 140, 460);
+const camera = new THREE.PerspectiveCamera(65, innerWidth / innerHeight, 0.1, 1200);
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+scene.add(new THREE.HemisphereLight(0xffffff, new THREE.Color(C.grass), 1.3));
+const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+sun.position.set(80, 140, 60);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -220, right: 220, top: 220, bottom: -220, far: 500 });
+scene.add(sun);
+
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400), new THREE.MeshStandardMaterial({ color: C.grass, roughness: 1 }));
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// ---------- 赛道 ----------
+const control = [[0, 0], [60, -12], [118, 6], [138, 58], [108, 108], [46, 112], [6, 82], [-38, 112], [-102, 104], [-128, 52], [-96, 4], [-44, -10]];
+const curve = new THREE.CatmullRomCurve3(control.map(([x, z]) => new THREE.Vector3(x * 1.4, 0, z * 1.4)), true, "centripetal");
+const SAMPLES = 720;
+const points = curve.getSpacedPoints(SAMPLES);
+const tangents = points.map((_, i) => curve.getTangentAt((i % SAMPLES) / SAMPLES));
+const normals = tangents.map((t) => new THREE.Vector3(-t.z, 0, t.x).normalize());
+const trackLength = curve.getLength();
+const HW = DESIGN.roadWidth / 2;
+
+function strip(offsetIn, offsetOut, y, colorAt) {
+  const pos = [], col = [];
+  const c = new THREE.Color();
+  for (let i = 0; i < SAMPLES; i++) {
+    const a = points[i], b = points[i + 1], na = normals[i], nb = normals[(i + 1) % SAMPLES];
+    const q = [
+      a.clone().addScaledVector(na, offsetIn), a.clone().addScaledVector(na, offsetOut),
+      b.clone().addScaledVector(nb, offsetIn), b.clone().addScaledVector(nb, offsetOut),
+    ];
+    c.set(colorAt(i));
+    for (const v of [q[0], q[1], q[2], q[2], q[1], q[3]]) {
+      pos.push(v.x, y, v.z);
+      col.push(c.r, c.g, c.b);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, side: THREE.DoubleSide }));
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+}
+strip(-HW, HW, 0.03, () => C.road);
+strip(HW, HW + 1.4, 0.05, (i) => (Math.floor(i / 6) % 2 ? C.curbA : C.curbB));
+strip(-HW - 1.4, -HW, 0.05, (i) => (Math.floor(i / 6) % 2 ? C.curbA : C.curbB));
+strip(-0.25, 0.25, 0.04, (i) => (Math.floor(i / 8) % 2 ? C.line : C.road));
+
+const checker = document.createElement("canvas");
+checker.width = 256; checker.height = 32;
+const cx = checker.getContext("2d");
+for (let x = 0; x < 16; x++) for (let y = 0; y < 2; y++) {
+  cx.fillStyle = (x + y) % 2 ? "#111" : "#fff";
+  cx.fillRect(x * 16, y * 16, 16, 16);
+}
+const startLine = new THREE.Mesh(new THREE.PlaneGeometry(DESIGN.roadWidth, 2), new THREE.MeshStandardMaterial({ map: new THREE.CanvasTexture(checker) }));
+startLine.rotation.x = -Math.PI / 2;
+startLine.rotation.z = Math.atan2(tangents[0].x, tangents[0].z);
+startLine.position.set(points[0].x, 0.07, points[0].z);
+scene.add(startLine);
+
+function nearest(x, z, hint = -1) {
+  let best = 0, bestD = Infinity;
+  const range = hint < 0 ? SAMPLES : 60;
+  for (let k = -range; k <= range; k++) {
+    const i = hint < 0 ? k + range : ((hint + k) % SAMPLES + SAMPLES) % SAMPLES;
+    if (i < 0 || i >= SAMPLES) continue;
+    const d = (points[i].x - x) ** 2 + (points[i].z - z) ** 2;
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return { index: best, distance: Math.sqrt(bestD) };
+}
+
+const treeMat = new THREE.MeshStandardMaterial({ color: C.trees, roughness: 0.8 });
+const trunkMat = new THREE.MeshStandardMaterial({ color: C.trunk });
+for (let n = 0; n < DESIGN.trees; n++) {
+  const x = (Math.random() - 0.5) * 520, z = (Math.random() - 0.5) * 440 + 70;
+  if (nearest(x, z).distance < HW + 8) continue;
+  const tree = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.7, 3, 8), trunkMat);
+  trunk.position.y = 1.5;
+  const top = new THREE.Mesh(new THREE.ConeGeometry(3, 7, 10), treeMat);
+  top.position.y = 6;
+  trunk.castShadow = top.castShadow = true;
+  tree.add(trunk, top);
+  tree.position.set(x, 0, z);
+  tree.scale.setScalar(0.8 + Math.random() * 0.7);
+  scene.add(tree);
+}
+
+// ---------- 卡丁车 ----------
+function makeKart(hex) {
+  const kart = new THREE.Group();
+  const paint = new THREE.MeshStandardMaterial({ color: hex, metalness: 0.3, roughness: 0.4 });
+  const dark = new THREE.MeshStandardMaterial({ color: "#222" });
+  const add = (geo, mat, x, y, z) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    m.castShadow = true;
+    kart.add(m);
+    return m;
+  };
+  add(new THREE.BoxGeometry(2.2, 0.55, 3.2), paint, 0, 0.6, 0);
+  add(new THREE.BoxGeometry(1.6, 0.4, 1.0), paint, 0, 0.55, 1.9);
+  add(new THREE.BoxGeometry(1.2, 0.7, 0.9), dark, 0, 1.1, -0.5);
+  add(new THREE.SphereGeometry(0.48, 16, 12), new THREE.MeshStandardMaterial({ color: "#ffffff" }), 0, 1.75, -0.4);
+  add(new THREE.BoxGeometry(2.4, 0.12, 0.6), paint, 0, 1.3, -1.7);
+  kart.userData.wheels = [];
+  for (const [x, z] of [[1.2, 1.1], [-1.2, 1.1], [1.2, -1.1], [-1.2, -1.1]]) {
+    const w = add(new THREE.CylinderGeometry(0.48, 0.48, 0.45, 16), dark, x, 0.48, z);
+    w.rotation.z = Math.PI / 2;
+    kart.userData.wheels.push(w);
+  }
+  scene.add(kart);
+  return kart;
+}
+
+const keys = new Set();
+addEventListener("keydown", (e) => {
+  if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.code)) e.preventDefault();
+  keys.add(e.code);
+  if (e.code === "KeyR") location.reload();
+});
+addEventListener("keyup", (e) => keys.delete(e.code));
+const held = (...codes) => codes.some((c) => keys.has(c));
+
+const start = 4;
+const player = {
+  mesh: makeKart(C.player),
+  x: points[start].x, z: points[start].z,
+  heading: Math.atan2(tangents[start].x, tangents[start].z),
+  speed: 0, boost: 0, cooldown: 0,
+  index: start, lap: 0, checkpoints: new Set(), finished: false,
+};
+const opponents = [];
+for (let i = 0; i < Math.min(DESIGN.opponents, 5); i++) {
+  opponents.push({
+    mesh: makeKart(C.opponents[i % C.opponents.length]),
+    t: (start + 6 + i * 6) / SAMPLES,
+    offset: (i % 2 ? -1 : 1) * (HW * 0.45),
+    speed: DESIGN.opponentSpeed * (0.92 + Math.random() * 0.12),
+    phase: Math.random() * 10,
+  });
+}
+
+let state = "countdown";
+let countdown = 3.5;
+let elapsed = 0;
+
+function progressOf(p) { return p.lap + p.index / SAMPLES; }
+
+function updatePlayer(dt) {
+  const throttle = held("KeyW", "ArrowUp");
+  const brake = held("KeyS", "ArrowDown");
+  const steer = (held("KeyA", "ArrowLeft") ? 1 : 0) - (held("KeyD", "ArrowRight") ? 1 : 0);
+  if (held("Space") && player.cooldown <= 0) {
+    player.boost = DESIGN.boostDuration;
+    player.cooldown = DESIGN.boostCooldown;
+  }
+  player.boost = Math.max(0, player.boost - dt);
+  player.cooldown = Math.max(0, player.cooldown - dt);
+
+  const near = nearest(player.x, player.z, player.index);
+  const onRoad = near.distance < HW + 1.4;
+  let limit = player.boost > 0 ? DESIGN.boostSpeed : DESIGN.maxSpeed;
+  if (!onRoad) limit *= 0.45;
+  if (throttle || player.boost > 0) player.speed += DESIGN.acceleration * (player.boost > 0 ? 2 : 1) * dt;
+  else if (brake) player.speed -= DESIGN.acceleration * 1.8 * dt;
+  else player.speed *= 1 - 1.1 * dt;
+  player.speed = Math.max(-8, player.speed);
+  if (player.speed > limit) player.speed -= (player.speed - limit) * 3 * dt;
+
+  const grip = Math.min(1, Math.abs(player.speed) / 10) * Math.sign(player.speed || 1);
+  player.heading += steer * DESIGN.turnSpeed * grip * dt;
+  player.x += Math.sin(player.heading) * player.speed * dt;
+  player.z += Math.cos(player.heading) * player.speed * dt;
+
+  const previous = player.index;
+  player.index = nearest(player.x, player.z, player.index).index;
+  if (player.index > SAMPLES * 0.3 && player.index < SAMPLES * 0.4) player.checkpoints.add(1);
+  if (player.index > SAMPLES * 0.6 && player.index < SAMPLES * 0.7) player.checkpoints.add(2);
+  if (previous > SAMPLES * 0.9 && player.index < SAMPLES * 0.1 && player.checkpoints.size === 2) {
+    player.lap += 1;
+    player.checkpoints.clear();
+    if (player.lap >= DESIGN.laps) {
+      player.finished = true;
+      state = "finished";
+    }
+  }
+
+  for (const o of opponents) {
+    const dx = player.x - o.mesh.position.x, dz = player.z - o.mesh.position.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 3 && d > 0.01) {
+      player.x += (dx / d) * (3 - d);
+      player.z += (dz / d) * (3 - d);
+      player.speed *= 0.9;
+    }
+  }
+}
+
+function updateOpponents(dt) {
+  for (const o of opponents) {
+    o.t += (o.speed * (1 + 0.05 * Math.sin(elapsed * 0.7 + o.phase)) / trackLength) * dt;
+    const u = ((o.t % 1) + 1) % 1;
+    const p = curve.getPointAt(u);
+    const tan = curve.getTangentAt(u);
+    const n = new THREE.Vector3(-tan.z, 0, tan.x).normalize();
+    const lane = o.offset + Math.sin(elapsed * 0.5 + o.phase) * 1.5;
+    o.mesh.position.set(p.x + n.x * lane, 0, p.z + n.z * lane);
+    o.mesh.rotation.y = Math.atan2(tan.x, tan.z);
+    o.mesh.userData.wheels.forEach((w) => (w.rotation.x += o.speed * dt * 2));
+  }
+}
+
+function rank() {
+  const mine = progressOf(player);
+  return 1 + opponents.filter((o) => o.t > mine).length;
+}
+
+const clock = new THREE.Clock();
+function frame() {
+  const dt = Math.min(clock.getDelta(), 1 / 30);
+  elapsed += dt;
+  if (state === "countdown") {
+    countdown -= dt;
+    center.innerHTML = countdown > 0.5 ? String(Math.ceil(countdown - 0.5)) : "GO!";
+    if (countdown <= 0) { state = "race"; center.innerHTML = ""; }
+  } else {
+    updateOpponents(dt);
+    if (state === "race") updatePlayer(dt);
+    else player.speed *= 1 - 2 * dt;
+  }
+  if (state === "finished") {
+    center.innerHTML = `完赛！第 ${rank()} 名<small>按 R 再比一场</small>`;
+  }
+
+  player.mesh.position.set(player.x, 0, player.z);
+  player.mesh.rotation.y = player.heading;
+  player.mesh.userData.wheels.forEach((w) => (w.rotation.x += player.speed * dt * 2));
+
+  const forward = new THREE.Vector3(Math.sin(player.heading), 0, Math.cos(player.heading));
+  const desired = player.mesh.position.clone().addScaledVector(forward, -11).add(new THREE.Vector3(0, 5.5, 0));
+  camera.position.lerp(desired, 1 - Math.exp(-6 * dt));
+  camera.lookAt(player.mesh.position.clone().addScaledVector(forward, 6).add(new THREE.Vector3(0, 1.5, 0)));
+
+  const lapShown = Math.min(player.lap + 1, DESIGN.laps);
+  hud.innerHTML = `圈数 ${lapShown} / ${DESIGN.laps}<br>名次 ${rank()} / ${opponents.length + 1}<br>速度 ${Math.round(Math.abs(player.speed) * 3.6)} km/h` +
+    `<div id="boost"><div id="boostFill" style="width:${(1 - player.cooldown / DESIGN.boostCooldown) * 100}%"></div></div>`;
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+camera.position.set(player.x, 8, player.z - 14);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Deterministic static-page check for OpenClaw-generated demos.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=lib.sh
+source "$ROOT/scripts/lib.sh"
+name="${1:-}"
+[[ "$name" =~ ^[a-z0-9][a-z0-9-]{0,39}$ ]] || {
+  echo "用法: workshop-check-page <demos 下的项目名>" >&2
+  exit 2
+}
+[[ -f "$ROOT/workspace/demos/$name/index.html" ]] || {
+  echo "缺少 demos/$name/index.html" >&2
+  exit 1
+}
+shift
+
+mkdir -p "$ROOT/workspace/.checks"
+prefix="$ROOT/workspace/.checks/$name"
+port="${SHOWCASE_PORT:-18088}"
+# Press the usual game/menu keys so errors in key handlers surface too.
+"$ROOT/runtime/node/bin/node" "$ROOT/openclaw/tools/page-check.mjs" \
+  "http://127.0.0.1:$port/workspace/demos/$name/" "$prefix" \
+  key:Enter wait:300 hold:ArrowRight:300 hold:ArrowUp:300 key:Space wait:400 key:Space wait:600 "$@"
+
+"$ROOT/runtime/pyenv/bin/python" - "$prefix-1.png" <<'PY'
+import sys
+from PIL import Image, ImageStat
+
+path = sys.argv[1]
+source = Image.open(path).convert("L")
+image = source.resize((160, 100))
+stat = ImageStat.Stat(image)
+mean, stddev = stat.mean[0], stat.stddev[0]
+histogram = image.histogram()
+nonblack = sum(histogram[13:]) / sum(histogram)
+width, height = source.size
+center = source.crop(
+    (int(width * 0.3), int(height * 0.2), int(width * 0.7), int(height * 0.8))
+).resize((80, 60))
+center_mean = ImageStat.Stat(center).mean[0]
+# Dark themes are fine; only a near-uniform screenshot means nothing rendered.
+if stddev < 3:
+    raise SystemExit(
+        f"PAGE_CHECK_FAIL: 页面截图几乎是纯色，可能什么都没画出来"
+        f"（mean={mean:.1f}, stddev={stddev:.1f}）。检查绘制代码和启动逻辑。"
+    )
+print(
+    f"PAGE_CHECK_OK: mean={mean:.1f}, center={center_mean:.1f}, "
+    f"stddev={stddev:.1f}, nonblack={nonblack:.1%}"
+)
+print(f"截图（可用 read 查看）：{path}")
+PY

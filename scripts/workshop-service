@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""Start/stop participant Python apps through the workshop supervisor."""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import urllib.request
+
+def showcase_port() -> str:
+    # Agent commands run without the gateway environment; reset writes the real ports here.
+    ports_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "runtime", "ports.env")
+    try:
+        with open(ports_file, encoding="utf-8") as handle:
+            for line in handle:
+                key, _, value = line.strip().partition("=")
+                if key == "SHOWCASE_PORT" and value:
+                    return value
+    except OSError:
+        pass
+    return os.environ.get("SHOWCASE_PORT", "18088")
+
+
+PORT = showcase_port()
+BASE = f"http://127.0.0.1:{PORT}/api/services"
+
+
+def request(path: str, payload: dict | None = None) -> dict:
+    body = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(
+        BASE + path,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST" if body is not None else "GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            return json.load(response)
+    except Exception as exc:
+        raise SystemExit(f"workshop-service failed: {exc}") from exc
+
+
+def main() -> None:
+    if len(sys.argv) < 3 or sys.argv[1] not in {"start", "stop", "status"}:
+        raise SystemExit(
+            "usage: workshop-service start NAME demos/NAME/server.py PORT\n"
+            "       workshop-service stop|status NAME"
+        )
+    action, name = sys.argv[1:3]
+    if action == "start":
+        if len(sys.argv) != 5:
+            raise SystemExit("start requires NAME SCRIPT PORT")
+        result = request(
+            "/start",
+            {"name": name, "script": sys.argv[3], "port": int(sys.argv[4])},
+        )
+    elif action == "stop":
+        result = request("/stop", {"name": name})
+    else:
+        result = request("/" + name)
+    print(json.dumps(result, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()

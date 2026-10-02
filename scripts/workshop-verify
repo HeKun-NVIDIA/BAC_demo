@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Independently exercise the published demo before OpenClaw reports success.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib.sh
+source "$HERE/lib.sh"
+
+target="${1:-}"
+case "$target" in
+  pong|pong-upgrade|platformer|kart3d|spark3d|breathe|voice)
+    "$NODE_HOME/bin/node" "$HERE/verify-published-demo.mjs" "$target"
+    ;;
+  camera)
+    "$HERE/workshop-service" status camera >/dev/null
+    "$DEMO_PYENV/bin/python" - <<'PY'
+import time
+import json
+import urllib.request
+
+for attempt in range(40):
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:18090/", timeout=2) as response:
+            page = response.read(200_000)
+        break
+    except Exception:
+        if attempt == 39:
+            raise
+        time.sleep(0.25)
+assert b"camera" in page.lower() or b"\xe6\x91\x84\xe5\x83\x8f\xe5\xa4\xb4" in page
+
+response = urllib.request.urlopen("http://127.0.0.1:18090/video_feed", timeout=10)
+chunk = response.read(8192)
+response.close()
+assert b"Content-Type: image/jpeg" in chunk and b"\xff\xd8" in chunk
+
+with urllib.request.urlopen("http://127.0.0.1:18090/snapshot", timeout=5) as response:
+    first = json.load(response)
+time.sleep(2)
+with urllib.request.urlopen("http://127.0.0.1:18090/snapshot", timeout=5) as response:
+    second = json.load(response)
+assert first.get("image", "").startswith("data:image/jpeg;base64,")
+assert second.get("image", "").startswith("data:image/jpeg;base64,")
+PY
+    ;;
+  *)
+    die "用法: workshop-verify {pong|pong-upgrade|platformer|spark3d|breathe|camera|kart3d|voice}"
+    ;;
+esac
+
+echo "WORKSHOP_VERIFY_OK"
+echo "target=$target"
+echo "status=rendered_and_exercised"

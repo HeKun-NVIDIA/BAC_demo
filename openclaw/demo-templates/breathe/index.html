@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>呼吸冥想</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; font-family: system-ui, "PingFang SC", "Noto Sans CJK SC", sans-serif; color: #fff; }
+  canvas { position: fixed; inset: 0; }
+  #ui { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; pointer-events: none; }
+  #title { margin-top: 28px; font-size: 26px; font-weight: 700; letter-spacing: 4px; opacity: 0.9; }
+  #subtitle { margin-top: 6px; font-size: 15px; letter-spacing: 2px; opacity: 0.65; }
+  #phase { margin-top: auto; font-size: 40px; font-weight: 700; letter-spacing: 6px; text-shadow: 0 2px 12px rgba(0,0,0,0.25); }
+  #count { font-size: 64px; font-weight: 200; margin-bottom: 4px; }
+  #cycles { font-size: 15px; opacity: 0.75; margin-bottom: 18px; }
+  #quote { min-height: 32px; max-width: 640px; padding: 0 20px; text-align: center; font-size: 20px; line-height: 1.6; opacity: 0.95; margin-bottom: 18px; }
+  #bar { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 34px; pointer-events: auto; }
+  button { border: 1px solid rgba(255,255,255,0.45); background: rgba(255,255,255,0.14); color: #fff; padding: 10px 18px; border-radius: 999px;
+    font-size: 16px; cursor: pointer; backdrop-filter: blur(6px); transition: background 0.2s; font-family: inherit; }
+  button:hover { background: rgba(255,255,255,0.28); }
+  button.active { background: rgba(255,255,255,0.4); border-color: #fff; }
+  #start { font-size: 18px; padding: 12px 34px; font-weight: 700; }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div id="ui">
+  <div id="title"></div>
+  <div id="subtitle"></div>
+  <div id="phase">准备开始</div>
+  <div id="count"></div>
+  <div id="cycles"></div>
+  <div id="quote"></div>
+  <div id="bar">
+    <button id="start">开始</button>
+    <span id="themes"></span>
+    <button id="noise">白噪声：关</button>
+    <button id="quoteBtn">今日寄语</button>
+  </div>
+</div>
+<script>
+/* ==================== 作品设计 开始 ==================== */
+const DESIGN = {
+  title: "静 · 呼吸",
+  subtitle: "跟随光球，放慢呼吸",
+  // 呼吸节奏：seconds 为秒数，scale 为该阶段结束时光球大小（0 最小，1 最大）
+  phases: [
+    { name: "吸气", seconds: 4, scale: 1.0 },
+    { name: "屏息", seconds: 4, scale: 1.0 },
+    { name: "呼气", seconds: 6, scale: 0.0 },
+  ],
+  // 主题：背景渐变两色 + 光球颜色
+  themes: {
+    森林: { top: "#1f4d3a", bottom: "#86c8a0", glow: "#d9ffe6" },
+    海洋: { top: "#0b3a66", bottom: "#5fb7e6", glow: "#d6f2ff" },
+    星空: { top: "#140c2e", bottom: "#4b3c8f", glow: "#f1e6ff" },
+  },
+  defaultTheme: "海洋",
+  // 环绕粒子数量
+  particleCount: 160,
+  // 白噪声音量 0–1
+  noiseVolume: 0.18,
+  // 寄语朗读音色（vivian / serena 为女声）
+  voice: "vivian",
+  voiceSpeed: 0.9,
+  quotePrompt: "请写一句不超过 30 字的中文冥想寄语，温柔、平静、富有画面感。只输出这句话。",
+};
+/* ==================== 作品设计 结束 ==================== */
+
+document.title = DESIGN.title;
+const $ = (id) => document.getElementById(id);
+$("title").textContent = DESIGN.title;
+$("subtitle").textContent = DESIGN.subtitle;
+const canvas = $("scene");
+const ctx = canvas.getContext("2d");
+let W = 0, H = 0;
+function resize() {
+  const dpr = Math.min(devicePixelRatio, 2);
+  W = innerWidth; H = innerHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + "px"; canvas.style.height = H + "px";
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+addEventListener("resize", resize);
+resize();
+
+let theme = DESIGN.themes[DESIGN.defaultTheme] ? DESIGN.defaultTheme : Object.keys(DESIGN.themes)[0];
+for (const name of Object.keys(DESIGN.themes)) {
+  const b = document.createElement("button");
+  b.textContent = name;
+  b.dataset.theme = name;
+  b.onclick = () => { theme = name; refreshThemeButtons(); };
+  $("themes").appendChild(b);
+  $("themes").append(" ");
+}
+function refreshThemeButtons() {
+  document.querySelectorAll("[data-theme]").forEach((b) => b.classList.toggle("active", b.dataset.theme === theme));
+}
+refreshThemeButtons();
+
+// ---------- 呼吸节奏 ----------
+let running = false;
+let phaseIndex = 0;
+let phaseTime = 0;
+let cycles = 0;
+let breath = 0.2;           // 0 = 呼尽，1 = 吸满
+$("start").onclick = () => {
+  running = !running;
+  $("start").textContent = running ? "暂停" : "继续";
+  if (running && phaseTime === 0 && phaseIndex === 0) breath = 0;
+};
+
+function updateBreath(dt) {
+  if (!running) {
+    breath += (0.3 + Math.sin(performance.now() / 1600) * 0.05 - breath) * dt;
+    return;
+  }
+  const phase = DESIGN.phases[phaseIndex];
+  phaseTime += dt;
+  const startScale = DESIGN.phases[(phaseIndex + DESIGN.phases.length - 1) % DESIGN.phases.length].scale;
+  const k = Math.min(1, phaseTime / phase.seconds);
+  const ease = 0.5 - Math.cos(k * Math.PI) / 2;
+  breath = startScale + (phase.scale - startScale) * ease;
+  $("phase").textContent = phase.name;
+  $("count").textContent = Math.max(1, Math.ceil(phase.seconds - phaseTime));
+  if (phaseTime >= phase.seconds) {
+    phaseTime = 0;
+    phaseIndex = (phaseIndex + 1) % DESIGN.phases.length;
+    if (phaseIndex === 0) cycles += 1;
+  }
+  $("cycles").textContent = `已完成 ${cycles} 轮`;
+}
+
+// ---------- 粒子与画面 ----------
+const particles = Array.from({ length: DESIGN.particleCount }, () => ({
+  angle: Math.random() * Math.PI * 2,
+  orbit: 0.7 + Math.random() * 0.9,
+  size: 1 + Math.random() * 2.6,
+  speed: (0.05 + Math.random() * 0.15) * (Math.random() < 0.5 ? 1 : -1),
+  wobble: Math.random() * Math.PI * 2,
+}));
+function draw(dt, t) {
+  const th = DESIGN.themes[theme];
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, th.top);
+  g.addColorStop(1, th.bottom);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  const cx = W / 2, cy = H * 0.34;
+  const base = Math.min(W, H) * 0.1;
+  const radius = base * (1 + breath * 0.7);
+  for (let i = 4; i >= 1; i--) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius * (1 + i * 0.22), 0, Math.PI * 2);
+    ctx.fillStyle = th.glow;
+    ctx.globalAlpha = 0.05 * (5 - i);
+    ctx.fill();
+  }
+  const core = ctx.createRadialGradient(cx, cy, radius * 0.1, cx, cy, radius);
+  core.addColorStop(0, "rgba(255,255,255,0.95)");
+  core.addColorStop(1, th.glow);
+  ctx.globalAlpha = 0.85;
+  ctx.fillStyle = core;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = th.glow;
+  for (const p of particles) {
+    p.angle += p.speed * dt * (running ? 1.6 : 0.8);
+    const r = radius * (1.25 + p.orbit * (0.6 + breath * 0.7)) + Math.sin(t * 0.8 + p.wobble) * 8;
+    ctx.globalAlpha = 0.35 + 0.45 * Math.sin(t + p.wobble) ** 2;
+    ctx.beginPath();
+    ctx.arc(cx + Math.cos(p.angle) * r, cy + Math.sin(p.angle) * r * 0.82, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ---------- 白噪声 ----------
+let audio = null, noiseGain = null;
+$("noise").onclick = () => {
+  if (!audio) {
+    audio = new (window.AudioContext || window.webkitAudioContext)();
+    const buffer = audio.createBuffer(1, audio.sampleRate * 2, audio.sampleRate);
+    const data = buffer.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < data.length; i++) {
+      last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02; // 柔和的褐噪声
+      data[i] = last * 3.5;
+    }
+    const source = audio.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+    const filter = audio.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = 900;
+    noiseGain = audio.createGain();
+    noiseGain.gain.value = 0;
+    source.connect(filter).connect(noiseGain).connect(audio.destination);
+    source.start();
+  }
+  if (audio.state === "suspended") audio.resume();
+  const on = noiseGain.gain.value < 0.01;
+  noiseGain.gain.setTargetAtTime(on ? DESIGN.noiseVolume : 0, audio.currentTime, 0.4);
+  $("noise").textContent = on ? "白噪声：开" : "白噪声：关";
+  $("noise").classList.toggle("active", on);
+};
+
+// ---------- 今日寄语（本地 Qwen + 本地语音）----------
+$("quoteBtn").onclick = async () => {
+  const button = $("quoteBtn");
+  button.disabled = true;
+  $("quote").textContent = "正在生成寄语…";
+  try {
+    const reply = await fetch("/api/llm/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        messages: [{ role: "user", content: DESIGN.quotePrompt }],
+        max_tokens: 80,
+        temperature: 0.9,
+        chat_template_kwargs: { enable_thinking: false },
+      }),
+    }).then((r) => r.json());
+    const text = (reply.choices?.[0]?.message?.content || "此刻，只需安静地呼吸。").trim().replace(/^["“]|["”]$/g, "");
+    $("quote").textContent = text;
+    const speech = await fetch("/api/tts/v1/audio/speech", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: text, voice: DESIGN.voice, speed: DESIGN.voiceSpeed }),
+    });
+    if (speech.ok) {
+      const url = URL.createObjectURL(await speech.blob());
+      const player = new Audio(url);
+      player.onended = () => URL.revokeObjectURL(url);
+      player.play();
+    }
+  } catch (error) {
+    $("quote").textContent = "寄语暂时无法生成：" + error.message;
+  } finally {
+    button.disabled = false;
+  }
+};
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  updateBreath(dt);
+  draw(dt, now / 1000);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

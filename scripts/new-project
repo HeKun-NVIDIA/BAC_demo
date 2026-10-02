@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Create a workshop project in demos/<name>/ and print its design section so the
+# agent can tailor it to the request.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib.sh
+source "$HERE/lib.sh"
+
+name="${1:-}"
+case "$name" in
+  pong|platformer|kart3d|spark3d|breathe|voice) entry="index.html" ;;
+  camera) entry="camera_server.py" ;;
+  *) die "用法: new-project {pong|platformer|kart3d|spark3d|breathe|camera|voice}" ;;
+esac
+
+source_dir="$DEMO_ROOT/openclaw/demo-templates/$name"
+target_dir="$DEMO_WORKSPACE/demos/$name"
+if [[ -e "$target_dir/$entry" ]]; then
+  echo "项目 demos/$name/ 已存在，继续在它的基础上修改。"
+else
+  mkdir -p "$DEMO_WORKSPACE/demos"
+  cp -a "$source_dir" "$target_dir"
+  chmod -R u+rwX "$target_dir"
+  echo "项目已创建：demos/$name/"
+fi
+echo "主文件（edit 时使用这个绝对路径）：$target_dir/$entry"
+echo "----- 作品设计 -----"
+sed -n '/作品设计 开始/,/作品设计 结束/p' "$target_dir/$entry"

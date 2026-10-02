@@ -1,0 +1,12 @@
+{
+  "name": "@local/workshop-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "peerDependencies": {
+    "openclaw": ">=2026.9.4"
+  },
+  "openclaw": {
+    "extensions": ["./index.js"]
+  }
+}

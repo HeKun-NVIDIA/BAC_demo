@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DGX Spark 3D</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; font-family: system-ui, "PingFang SC", "Noto Sans CJK SC", sans-serif; }
+  #title { position: fixed; top: 22px; left: 28px; font-size: 30px; font-weight: 800; letter-spacing: 1px; }
+  #subtitle { position: fixed; top: 64px; left: 28px; font-size: 16px; opacity: 0.75; }
+  #hint { position: fixed; bottom: 18px; width: 100%; text-align: center; font-size: 15px; opacity: 0.7; }
+  #card { position: fixed; top: 50%; right: 32px; transform: translateY(-50%) scale(0.96); width: 320px; padding: 22px 24px;
+    border-radius: 16px; backdrop-filter: blur(12px); box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+    opacity: 0; pointer-events: none; transition: all 0.25s ease; }
+  #card.show { opacity: 1; transform: translateY(-50%) scale(1); pointer-events: auto; }
+  #card h2 { margin: 0 0 12px; font-size: 22px; }
+  #card li { margin: 8px 0; font-size: 15px; line-height: 1.4; }
+  #card button { position: absolute; top: 10px; right: 14px; border: none; background: none; font-size: 22px; cursor: pointer; color: inherit; }
+</style>
+<script type="importmap">{"imports":{"three":"/vendor/three/build/three.module.js"}}</script>
+</head>
+<body>
+<div id="title"></div>
+<div id="subtitle"></div>
+<div id="card"><button id="close">×</button><h2 id="cardTitle"></h2><ul id="cardList"></ul></div>
+<div id="hint">拖动旋转　滚轮缩放　点击主机查看参数</div>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "/vendor/three/examples/jsm/controls/OrbitControls.js";
+import { RoomEnvironment } from "/vendor/three/examples/jsm/environments/RoomEnvironment.js";
+
+/* ==================== 作品设计 开始 ==================== */
+const DESIGN = {
+  title: "NVIDIA DGX Spark",
+  subtitle: "桌面上的 AI 超级计算机",
+  colors: {
+    // 背景
+    background: "#eef3f8",
+    text: "#1d2433",
+    // 机身（香槟金）
+    body: "#c9a96e",
+    // NVIDIA 绿灯条
+    accent: "#76b900",
+    floor: "#dfe7ef",
+    card: "rgba(255,255,255,0.82)",
+    particles: ["#76b900", "#33c3ff", "#9b6bff"],
+  },
+  // 数据粒子数量
+  particleCount: 1200,
+  // 粒子流动速度
+  particleSpeed: 1.0,
+  // 自动旋转
+  autoRotate: true,
+  rotateSpeed: 1.2,
+  info: {
+    name: "DGX Spark 规格",
+    items: [
+      "NVIDIA GB10 Grace Blackwell 超级芯片",
+      "128 GB 统一系统内存",
+      "最高 1 PFLOP FP4 AI 算力",
+      "本地运行 Qwen 3.6、OpenClaw 与语音模型",
+      "ConnectX-7 高速网络，可两台互联",
+    ],
+  },
+};
+/* ==================== 作品设计 结束 ==================== */
+
+const C = DESIGN.colors;
+document.title = DESIGN.title;
+document.body.style.background = C.background;
+document.body.style.color = C.text;
+document.getElementById("title").textContent = DESIGN.title;
+document.getElementById("subtitle").textContent = DESIGN.subtitle;
+const card = document.getElementById("card");
+card.style.background = C.card;
+document.getElementById("cardTitle").textContent = DESIGN.info.name;
+document.getElementById("cardList").innerHTML = DESIGN.info.items.map((t) => `<li>${t}</li>`).join("");
+document.getElementById("close").onclick = () => card.classList.remove("show");
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(C.background);
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 200);
+camera.position.set(6.5, 4.2, 7.5);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.target.set(0, 0.6, 0);
+controls.minDistance = 5;
+controls.maxDistance = 18;
+controls.maxPolarAngle = Math.PI * 0.48;
+controls.autoRotate = DESIGN.autoRotate;
+controls.autoRotateSpeed = DESIGN.rotateSpeed;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0xb8c4d0, 1.6));
+const key = new THREE.DirectionalLight(0xffffff, 2.6);
+key.position.set(5, 9, 6);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.radius = 6;
+scene.add(key);
+const rim = new THREE.DirectionalLight(new THREE.Color(C.accent), 1.2);
+rim.position.set(-6, 3, -5);
+scene.add(rim);
+
+const floor = new THREE.Mesh(new THREE.CircleGeometry(9, 64), new THREE.MeshStandardMaterial({ color: C.floor, roughness: 0.9 }));
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
+scene.add(floor);
+const ring = new THREE.Mesh(new THREE.RingGeometry(3.1, 3.2, 96), new THREE.MeshBasicMaterial({ color: C.accent, transparent: true, opacity: 0.6 }));
+ring.rotation.x = -Math.PI / 2;
+ring.position.y = 0.01;
+scene.add(ring);
+
+// ---------- 主机 ----------
+function meshTexture() {
+  const c = document.createElement("canvas");
+  c.width = c.height = 512;
+  const x = c.getContext("2d");
+  x.fillStyle = C.body;
+  x.fillRect(0, 0, 512, 512);
+  x.fillStyle = "rgba(40, 30, 15, 0.55)";
+  for (let row = 0; row < 32; row++) for (let col = 0; col < 32; col++) {
+    x.beginPath();
+    x.arc(col * 16 + (row % 2 ? 12 : 4), row * 16 + 8, 4.2, 0, Math.PI * 2);
+    x.fill();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+function labelTexture(text) {
+  const c = document.createElement("canvas");
+  c.width = 512; c.height = 128;
+  const x = c.getContext("2d");
+  x.fillStyle = "#1b1b1b";
+  x.font = "bold 64px system-ui, sans-serif";
+  x.textAlign = "center";
+  x.textBaseline = "middle";
+  x.fillText(text, 256, 64);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+const spark = new THREE.Group();
+const gold = new THREE.MeshStandardMaterial({ color: C.body, metalness: 0.85, roughness: 0.28 });
+const body = new THREE.Mesh(new THREE.BoxGeometry(3, 1, 3, 1, 1, 1), gold);
+body.position.y = 0.62;
+body.castShadow = true;
+spark.add(body);
+const front = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 0.82), new THREE.MeshStandardMaterial({ map: meshTexture(), metalness: 0.7, roughness: 0.35 }));
+front.position.set(0, 0.62, 1.501);
+spark.add(front);
+const back = front.clone();
+back.position.z = -1.501;
+back.rotation.y = Math.PI;
+spark.add(back);
+const accent = new THREE.Mesh(new THREE.BoxGeometry(3.02, 0.05, 3.02), new THREE.MeshStandardMaterial({ color: C.accent, emissive: C.accent, emissiveIntensity: 1.2 }));
+accent.position.y = 0.14;
+spark.add(accent);
+const top = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.4), new THREE.MeshBasicMaterial({ map: labelTexture("DGX Spark"), transparent: true }));
+top.rotation.x = -Math.PI / 2;
+top.position.set(0, 1.125, 0.6);
+spark.add(top);
+const feet = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.12, 2.6), new THREE.MeshStandardMaterial({ color: "#2a2a2a" }));
+feet.position.y = 0.06;
+spark.add(feet);
+const portMat = new THREE.MeshStandardMaterial({ color: "#111", roughness: 0.6 });
+for (let i = 0; i < 5; i++) {
+  const port = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.12, 0.05), portMat);
+  port.position.set(-0.9 + i * 0.45, 0.4, -1.53);
+  spark.add(port);
+}
+scene.add(spark);
+
+// ---------- 数据粒子 ----------
+const N = DESIGN.particleCount;
+const positions = new Float32Array(N * 3);
+const colors = new Float32Array(N * 3);
+const seeds = [];
+const palette = C.particles.map((c) => new THREE.Color(c));
+for (let i = 0; i < N; i++) {
+  seeds.push({ radius: 2.4 + Math.random() * 2.6, angle: Math.random() * Math.PI * 2, height: Math.random() * 4, speed: 0.3 + Math.random() * 0.7 });
+  const c = palette[i % palette.length];
+  colors.set([c.r, c.g, c.b], i * 3);
+}
+const geo = new THREE.BufferGeometry();
+geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+const dots = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.07, vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false }));
+scene.add(dots);
+
+// ---------- 点击查看参数 ----------
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+let downAt = null;
+renderer.domElement.addEventListener("pointerdown", (e) => (downAt = [e.clientX, e.clientY]));
+renderer.domElement.addEventListener("pointerup", (e) => {
+  if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5) return;
+  pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(pointer, camera);
+  if (raycaster.intersectObject(spark, true).length) card.classList.add("show");
+});
+
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+const clock = new THREE.Clock();
+function frame() {
+  const dt = Math.min(clock.getDelta(), 1 / 30);
+  const t = clock.elapsedTime;
+  for (let i = 0; i < N; i++) {
+    const s = seeds[i];
+    s.angle += s.speed * DESIGN.particleSpeed * dt;
+    s.height += 0.25 * DESIGN.particleSpeed * dt;
+    if (s.height > 4) s.height = 0;
+    const r = s.radius + Math.sin(t * 0.8 + i) * 0.08;
+    positions[i * 3] = Math.cos(s.angle) * r;
+    positions[i * 3 + 1] = 0.2 + s.height;
+    positions[i * 3 + 2] = Math.sin(s.angle) * r;
+  }
+  geo.attributes.position.needsUpdate = true;
+  accent.material.emissiveIntensity = 0.9 + Math.sin(t * 2.4) * 0.4;
+  ring.material.opacity = 0.4 + Math.sin(t * 1.6) * 0.2;
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

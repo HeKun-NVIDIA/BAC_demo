@@ -1,0 +1,11 @@
+{
+  "id": "workshop-agent",
+  "name": "Workshop Output Guard",
+  "description": "Keeps local demo builds on coding tools and normalizes demo links to the LAN address.",
+  "activation": { "onStartup": true },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

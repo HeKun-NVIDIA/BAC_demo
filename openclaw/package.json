@@ -1,0 +1,11 @@
+{
+  "name": "dgx-spark-openclaw-offline-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned local OpenClaw runtime for the DGX Spark offline demo",
+  "dependencies": {
+    "openclaw": "2026.9.4",
+    "sharp": "0.34.5"
+  }
+}
+

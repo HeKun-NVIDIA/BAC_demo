@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+DEMO_ROOT="$(cd "$BIN_DIR/../.." && pwd)"
+# shellcheck source=../../env.sh
+source "$DEMO_ROOT/env.sh"
+
+ENTRY="$DEMO_ROOT/openclaw/node_modules/openclaw/openclaw.mjs"
+[[ -x "$NODE_HOME/bin/node" ]] || {
+  echo "Node 22 未安装，请先运行 scripts/install-openclaw.sh" >&2
+  exit 1
+}
+[[ -f "$ENTRY" ]] || {
+  echo "OpenClaw 未安装，请先运行 scripts/install-openclaw.sh" >&2
+  exit 1
+}
+
+exec "$NODE_HOME/bin/node" "$ENTRY" "$@"
+
