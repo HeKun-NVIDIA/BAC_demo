@@ -85,6 +85,36 @@ scripts/pack.sh --split 20G   # 打包迁移到其他 DGX Spark
 - 除 Demo 7 的真实 NVIDIA 网页研究需要互联网外，其余 demo 运行时均为本地离线。
 - `scripts/pack.sh` 默认不包含可选 Nemotron（约 21 GB）；需要时加 `--with-nemotron`。
 
+## Qwen 上下文与 vLLM 排查
+
+重置前会读取运行中 vLLM `/v1/models` 中当前 Qwen 模型的 `max_model_len`，
+并写入 OpenClaw 的 `contextWindow`。因此修改 `QWEN_CONTEXT` 或复用较小上下文的服务时，
+不会继续按模板中的 131072 估算。若模型 ID 或上下文无效，重置会在停止 Gateway、
+清理旧会话之前退出；请先检查 `scripts/model-ctl.sh status` 和 `scripts/model-ctl.sh logs qwen`。
+仅修改环境变量不会改变已在运行的 vLLM，请在没有进行中的任务时手动重启本 demo 的模型服务。
+
+默认最大输出由 16384 降为 8192，给工具调用留出更保守的输出空间。OpenClaw 2026.9.4
+支持的 `compaction.midTurnPrecheck.enabled` 已开启：工具结果返回后、下一次模型请求之前
+检查上下文压力。压缩使用 `thinkingLevel: "off"`，避免本地总结额外的推理开销。
+这不会扩大模型真实窗口，也不保证视觉 token 的估算完全等同于 Qwen tokenizer。
+
+界面中的 **Prompt budget (last run)** 是扣除压缩预留后的提示词预算，不一定等于
+vLLM 的窗口；例如 65536 的窗口可以显示约 49.2k。**Latest run input** 是多次模型
+请求的累计用量，不代表同一请求装入了全部 token。仅凭高百分比或“Compacting context”
+不能断定窗口配置错误。
+
+vLLM/PyTorch 的 `TCPStore` / `should dump` 警告和 `deep_gemm` 导入问题应分别检查
+原始启动日志、实际选中的 NVFP4 backend 和真实生成/工具调用结果。HTTP 200 或一份
+AI 总结不能单独证明完全正常，也不要通过关闭 NCCL watchdog 或过滤日志来掩盖问题。
+本仓库的启动器仍是 **GB10 / DGX Spark** 路径；Jetson Thor 的本地修改需要单独审查，
+不要把 Spark 的 `sm_121a`、`flashinfer_b12x` 配置直接用于 Thor。
+
+CPU-only 回归测试（无需模型或 GPU）：
+
+```bash
+python3 -m unittest discover -s scripts/tests -v
+```
+
 ## 目录
 
 ```

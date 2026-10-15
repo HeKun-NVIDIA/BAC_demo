@@ -17,6 +17,13 @@ TOKEN_FILE="$DEMO_ROOT/openclaw/.secrets/gateway-token"
 rotate_token=0
 [[ "${1:-}" == "--rotate-token" ]] && rotate_token=1
 
+# vLLM owns the effective limit, including a lower --max-model-len on Thor
+# or a reused server. Resolve it before stopping or erasing participant state.
+qwen_context="$(curl -fsS --max-time 10 "$QWEN_BASE_URL/models" |
+  python3 "$HERE/qwen-context.py" "$QWEN_MODEL_ID")" ||
+  die "无法读取 Qwen 上下文；未重置 OpenClaw，请检查 scripts/model-ctl.sh status / logs qwen"
+info "Qwen 实际上下文: $qwen_context tokens"
+
 "$HERE/openclaw-ctl.sh" stop >/dev/null 2>&1 || true
 kill_participant_processes
 
@@ -51,16 +58,18 @@ if (( rotate_token )) || [[ ! -s "$TOKEN_FILE" ]]; then
 fi
 
 python3 - "$CONFIG_TEMPLATE" "$CONFIG_TARGET" "$TOKEN_FILE" "$DEMO_WORKSPACE" \
-  "$CHROMIUM_BIN" "$OPENCLAW_PORT" "$QWEN_PORT" "$TTS_PORT" <<'PY'
+  "$CHROMIUM_BIN" "$OPENCLAW_PORT" "$QWEN_PORT" "$TTS_PORT" "$qwen_context" <<'PY'
 import json, pathlib, sys
 template, target, token_file, workspace, chromium = sys.argv[1:6]
 gateway_port, qwen_port, tts_port = map(int, sys.argv[6:9])
+qwen_context = int(sys.argv[9])
 raw = pathlib.Path(template).read_text(encoding="utf-8")
 raw = raw.replace("__GATEWAY_TOKEN__", pathlib.Path(token_file).read_text().strip())
 raw = raw.replace("__WORKSPACE__", workspace)
 raw = raw.replace("__CHROMIUM_BIN__", chromium)
 raw = raw.replace("__WORKSHOP_PLUGIN__", str(pathlib.Path(workspace).parent / "openclaw/plugins/workshop-agent"))
 data = json.loads(raw)
+data["models"]["providers"]["qwen-local"]["models"][0]["contextWindow"] = qwen_context
 data["gateway"]["port"] = gateway_port
 data["models"]["providers"]["qwen-local"]["baseUrl"] = f"http://127.0.0.1:{qwen_port}/v1"
 data["tts"]["providers"]["openai"]["baseUrl"] = f"http://127.0.0.1:{tts_port}/v1"
