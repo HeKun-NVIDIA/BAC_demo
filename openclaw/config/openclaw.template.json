@@ -22,8 +22,8 @@
               "cacheRead": 0,
               "cacheWrite": 0
             },
-            "contextWindow": 131072,
-            "maxTokens": 16384
+            "contextWindow": "__QWEN_CONTEXT__",
+            "maxTokens": 8192
           }
         ]
       }
@@ -49,6 +49,10 @@
             }
           }
         }
+      },
+      "compaction": {
+        "midTurnPrecheck": { "enabled": true },
+        "thinkingLevel": "off"
       },
       "thinkingDefault": "off",
       "reasoningDefault": "off",
